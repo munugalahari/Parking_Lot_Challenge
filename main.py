@@ -1,6 +1,9 @@
 import json
 import random
+import string
+
 import boto3
+import creds
 
 
 class ParkingLot:
@@ -20,23 +23,31 @@ class ParkingLot:
     def park_car(self, car, spot_number):
         """
         Attempts to park a car in the specified parking spot.
-        Returns a message indicating success or failure.
+        If the spot is occupied, try to park in a different spot until successful.
+        Returns a message indicating success and failure.
         """
-        if self.parking_spots[spot_number] is not None:
-            return f"Car with license plate {car.license_plate} failed to park in spot {spot_number} bcoz it is already occupied."
-        else:
-            self.parking_spots[spot_number] = car
-            return f"Car with license plate {car.license_plate} parked successfully in spot {spot_number}."
+        attempts = 0
+        original_spot = spot_number
+        while self.parking_spots[spot_number] is not None:
+            spot_number = random.randint(0, self.num_parking_spots - 1)
+
+            # If all spots are occupied, return a message indicating failure after a certain number of attempts
+            attempts += 1
+            if attempts > self.num_parking_spots:
+                return f"Car with license plate {car.license_plate} could not park. Parking lot is full."
+
+            print(
+                f"Attempt {attempts}: Car with license plate {car.license_plate} trying to park in spot {spot_number}.")
+
+        self.parking_spots[spot_number] = car
+        return f"Car with license plate {car.license_plate} parked successfully in spot {spot_number}."
 
     def get_parked_vehicles_json(self):
         """
         Generates a JSON object representing the mapping of parked vehicles to parking spots.
         """
-        parked_vehicles = {}
-        for spot_number, car in enumerate(self.parking_spots):
-            if car is not None:
-                parked_vehicles[spot_number] = car.license_plate
-        return json.dumps(parked_vehicles)
+        return json.dumps(
+            {spot_number: car.license_plate for spot_number, car in enumerate(self.parking_spots) if car is not None})
 
 
 class Car:
@@ -64,18 +75,25 @@ class Car:
         return self.license_plate
 
 
+def generate_license_plate():
+    """
+    Generates a random alphanumeric license plate with the first 3 characters from the alphabet
+    and the remaining 4 characters from random numbers.
+    """
+    alphabets = random.choices(string.ascii_uppercase, k=3)
+    numbers = random.choices(string.digits, k=4)
+    return ''.join(alphabets + numbers)
+
+
 def main():
     """
-    Simulates parking cars in a parking lot, generates a JSON mapping of parked vehicles, and uploads it to an S3 bucket.
+    Simulates parking cars in a parking lot, generates a JSON mapping of parked vehicles, and uploads it to an S3 bucket
     """
     # Create a parking lot with 2000 square feet of space
     parking_lot = ParkingLot(total_square_footage=2000)
 
     # Generate a list of 10 cars with random license plates
-    cars = []
-    for _ in range(10):
-        license_plate = ''.join(random.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789') for _ in range(7))
-        cars.append(Car(license_plate))
+    cars = [Car(generate_license_plate()) for _ in range(10)]
 
     # Attempt to park each car in the parking lot until it's full or the car list is empty
     for car in cars:
@@ -98,14 +116,18 @@ def main():
     with open('parking_lot_mapping.json', 'w') as file:
         file.write(json_mapping)
 
-    session = boto3.Session(
-        aws_access_key_id='AKIAWOYP2WEGO4IZGGEG',
-        aws_secret_access_key='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',
-    )
-    s3 = session.client('s3')
-    file_name = 'parking_lot_mapping.json'
-    bucket_name = 'parking27'
-    s3.upload_file(file_name, bucket_name, file_name)
+    try:
+        session = boto3.Session(
+            aws_access_key_id=creds.aws_access_key_id,
+            aws_secret_access_key=creds.aws_secret_access_key,
+        )
+        s3 = session.client('s3')
+        file_name = 'parking_lot_mapping.json'
+        bucket_name = 'parking27'
+        s3.upload_file(file_name, bucket_name, file_name)
+        print(f"File {file_name} uploaded successfully to S3 bucket {bucket_name}")
+    except Exception as e:
+        print(f"Error uploading file to S3: {e}")
 
 
 if __name__ == "__main__":
